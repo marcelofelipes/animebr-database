@@ -2,7 +2,7 @@ package org.example
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.node.ArrayNode
+import me.xdrop.fuzzywuzzy.FuzzySearch
 import java.io.File
 import java.net.URI
 import java.net.http.HttpClient
@@ -44,8 +44,18 @@ fun findManamiAnime(animeName: String, manamiDatabase: List<JsonNode>): JsonNode
     }.findFirst().getOrNull()
 }
 
+fun findManamiAnimeSimilar(animeName: String, manamiDatabase: List<JsonNode>): JsonNode? {
+    return manamiDatabase.stream().filter {
+        FuzzySearch.ratio(it["title"].asText(), animeName) > 80 || it.withArrayProperty("synonyms")
+            .find { synonym -> FuzzySearch.ratio(synonym.asText(), animeName) > 80 } != null
+    }.findFirst().getOrNull()
+}
+
 fun main() {
     val mapper = ObjectMapper()
+    File("unmatch.txt").also {
+        if (it.exists()) it.delete()
+    }
 
 //    val giganimaDatabase = giganimaRequest("get_category")?.let {
 //        File("giganima-database.json").writeText(it)
@@ -60,20 +70,36 @@ fun main() {
 
     val animesGiga = giganimaDatabase.withArrayProperty("HD_VIDEO")!!
     var match = 0
+    var unMatchOriginal = 0
     var unMatch = 0
     val duration = measureTime {
         animesGiga.toList().parallelStream().forEach {
-            val matchItem = findManamiAnime(it["category_name"].asText(), manamiDatabase)
+            var gigaTitle = it["category_name"].asText()
+            gigaTitle = gigaTitle.replace("Dublado", "", true)
+            if (gigaTitle.contains("(")) {
+                gigaTitle = gigaTitle.substring(0, gigaTitle.indexOf("("))
+            }
+            var matchItem = findManamiAnime(gigaTitle, manamiDatabase)
 
             if (matchItem != null) {
                 match++
             } else {
-                unMatch++
+                unMatchOriginal++
+
+                matchItem = findManamiAnimeSimilar(gigaTitle, manamiDatabase)
+
+                if (matchItem != null) {
+                    match++
+                } else {
+                    File("unmatch.txt").appendText("$gigaTitle\n")
+                    unMatch++
+                }
             }
         }
     }
 
     println("Match: $match")
-    println("Unmatch: $unMatch")
+    println("Unmatch (Global): $unMatchOriginal")
+    println("Unmatch (Similar): $unMatch")
     println("Duration: $duration")
 }
